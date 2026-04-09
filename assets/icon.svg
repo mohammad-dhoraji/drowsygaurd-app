@@ -1,0 +1,36 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <!-- Rich dark green background gradient -->
+        <linearGradient id="appGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#022c22" />
+            <stop offset="100%" stop-color="#064e3b" />
+        </linearGradient>
+        
+        <!-- Subtle top-down glossy overlay for a premium app feel -->
+        <linearGradient id="gloss" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="white" stop-opacity="0.15" />
+            <stop offset="100%" stop-color="white" stop-opacity="0" />
+        </linearGradient>
+    </defs>
+    
+    <!-- App Icon Background (Solid Square for App Store / Google Play submission) -->
+    <rect width="1024" height="1024" fill="url(#appGradient)" />
+    
+    <!-- Gloss Overlay -->
+    <rect width="1024" height="1024" fill="url(#gloss)" />
+
+    <!-- Centered DrowsyGuard Logo Mark -->
+    <!-- The 100x100 logo is scaled by 6.5 and translated to perfectly center inside the 1024x1024 box, respecting standard safe-zone padding -->
+    <g transform="translate(187, 187) scale(6.5)">
+        
+        <!-- The Pillar (Solid, unwavering protection) -->
+        <rect x="18.5" y="15" width="16" height="70" rx="8" fill="#6ee7b7" />
+        
+        <!-- The Radar Arc (Monitoring, forming a 'D') -->
+        <path d="M 46.5 23 A 27 27 0 0 1 46.5 77" fill="none" stroke="#34d399" stroke-width="16" stroke-linecap="round" />
+        
+        <!-- The Alert Core (The driver's focus / The AI Eye) -->
+        <circle cx="50" cy="50" r="7.5" fill="#a7f3d0" />
+        
+    </g>
+</svg>
