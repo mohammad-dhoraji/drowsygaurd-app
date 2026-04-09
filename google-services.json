@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "8101883482",
+    "project_id": "drowsyguard-max03",
+    "storage_bucket": "drowsyguard-max03.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:8101883482:android:86dc2369fe435850893263",
+        "android_client_info": {
+          "package_name": "com.mdhoraji.drowsyguard"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDeNKlQUs-VsBk8JZReNE2dYw69RvDOxZk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

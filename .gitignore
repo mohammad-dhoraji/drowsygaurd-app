@@ -62,9 +62,10 @@ app-example
 
 app*.json
 firebase-adminsdk*.json
-google-services*.json
+
 
 # Secrets
 *.json
 !package.json
 !tsconfig.json
+!google-services.json
