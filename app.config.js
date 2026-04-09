@@ -51,6 +51,14 @@ export default {
 
     plugins: [
       [
+        "expo-build-properties",
+        {
+          android: {
+            minSdkVersion: 26,
+          },
+        },
+      ],
+      [
         "react-native-vision-camera",
         {
           enableFrameProcessors: true,
