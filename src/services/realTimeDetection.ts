@@ -64,7 +64,7 @@ export function processFaceFrame(
   let statusMessage = baseSnapshot.statusMessage;
   if (!hasValidDetection) {
     statusMessage = evaluation.isFaceMissing ? 'Face missing' : 'Finding face...';
-  } else if (shouldTrigger) {
+  } else if (evaluation.eyesClosed && evaluation.severity !== null) {
     statusMessage = 'ALERT: Drowsiness Detected!';
   } else if (evaluation.eyeState === 'CLOSED') {
     statusMessage = 'Eyes closed...';

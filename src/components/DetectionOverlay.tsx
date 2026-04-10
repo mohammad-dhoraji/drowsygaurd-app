@@ -1,5 +1,14 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Text, View } from 'react-native';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated';
 
 import type { DetectionSnapshot } from '@/types/detection';
 
@@ -38,11 +47,34 @@ function formatBackend(snapshot: DetectionSnapshot) {
 }
 
 export function DetectionOverlay({ snapshot }: { snapshot: DetectionSnapshot }) {
-  const frameBorderClass = snapshot.status === 'alert' || snapshot.isFaceMissing
-    ? 'border-red-400 animate-pulse'
+  const shouldPulseFrame = snapshot.status === 'alert' || snapshot.isFaceMissing;
+  const frameBorderClass = shouldPulseFrame
+    ? 'border-red-400'
     : snapshot.hasFace
       ? 'border-emerald-300'
       : 'border-white/50';
+  const frameOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    if (shouldPulseFrame) {
+      frameOpacity.value = withRepeat(
+        withSequence(
+          withTiming(0.45, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+          withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
+        ),
+        -1,
+        false
+      );
+      return;
+    }
+
+    cancelAnimation(frameOpacity);
+    frameOpacity.value = withTiming(1, { duration: 150 });
+  }, [frameOpacity, shouldPulseFrame]);
+
+  const animatedFrameStyle = useAnimatedStyle(() => ({
+    opacity: frameOpacity.value,
+  }));
 
   return (
     <View pointerEvents="none" className="absolute inset-0 justify-between p-4">
@@ -62,7 +94,10 @@ export function DetectionOverlay({ snapshot }: { snapshot: DetectionSnapshot }) 
       </View>
 
       <View className="flex-1 items-center justify-center">
-        <View className={`h-64 w-48 rounded-[32px] border-2 ${frameBorderClass}`} />
+        <Animated.View
+          className={`h-64 w-48 rounded-[32px] border-2 ${frameBorderClass}`}
+          style={animatedFrameStyle}
+        />
       </View>
 
       <View className="gap-3">
@@ -107,4 +142,3 @@ export function DetectionOverlay({ snapshot }: { snapshot: DetectionSnapshot }) 
     </View>
   );
 }
-

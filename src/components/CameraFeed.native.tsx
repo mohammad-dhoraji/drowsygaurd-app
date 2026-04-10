@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Text, TouchableOpacity, View } from 'react-native';
+import { Audio } from 'expo-av';
 import { Camera, useCameraDevice, useCameraPermission, useFrameProcessor } from 'react-native-vision-camera';
 import { useFaceDetector } from 'react-native-vision-camera-face-detector';
 import { Worklets } from 'react-native-worklets-core';
@@ -8,6 +9,8 @@ import { DetectionOverlay } from '@/components/DetectionOverlay';
 import { processFaceFrame } from '@/services/realTimeDetection';
 import { DEFAULT_DETECTION_SNAPSHOT, type CameraFeedProps, type DetectionSnapshot } from '@/types/detection';
 import { DEFAULT_EAR_THRESHOLD, INITIAL_DROWSINESS_STATE, DrowsinessState } from '@/utils/drowsinessLogic';
+
+const ALERT_SOUND_SOURCE = require('../../assets/alert.wav');
 
 export default function CameraFeed({ onSnapshotChange }: CameraFeedProps) {
   const { hasPermission, requestPermission } = useCameraPermission();
@@ -23,6 +26,8 @@ export default function CameraFeed({ onSnapshotChange }: CameraFeedProps) {
 
   const currentStateRef = useRef<DrowsinessState>(INITIAL_DROWSINESS_STATE);
   const snapshotRef = useRef<DetectionSnapshot>(snapshot);
+  const soundRef = useRef<Audio.Sound | null>(null);
+  const alertActiveRef = useRef(false);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -32,15 +37,71 @@ export default function CameraFeed({ onSnapshotChange }: CameraFeedProps) {
     onSnapshotChange?.(snapshot);
   }, [onSnapshotChange, snapshot]);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const setupSound = async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          playsInSilentModeIOS: true,
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+        });
+
+        const { sound } = await Audio.Sound.createAsync(
+          ALERT_SOUND_SOURCE,
+          { shouldPlay: false, isLooping: true, volume: 1 },
+        );
+
+        if (!mounted) {
+          await sound.unloadAsync();
+          return;
+        }
+
+        soundRef.current = sound;
+      } catch {
+        // Detection should keep running even if audio setup fails.
+      }
+    };
+
+    void setupSound();
+
+    return () => {
+      mounted = false;
+
+      if (soundRef.current) {
+        void soundRef.current.unloadAsync();
+        soundRef.current = null;
+      }
+
+      alertActiveRef.current = false;
+    };
+  }, []);
+
   const handleFaceDetection = Worklets.createRunOnJS((faceObj: any | null) => {
-    const { snapshot: newSnapshot, nextState, shouldTrigger } = processFaceFrame(
+    const { snapshot: newSnapshot, nextState } = processFaceFrame(
       faceObj, 
       currentStateRef.current, 
       snapshotRef.current
     );
     
     currentStateRef.current = nextState;
-    const status = shouldTrigger ? 'alert' : 'ready';
+    const alertVisible =
+      newSnapshot.isFaceMissing ||
+      (newSnapshot.eyesClosed && newSnapshot.severity !== null);
+    const status = alertVisible ? 'alert' : 'ready';
+
+    if (alertVisible) {
+      if (soundRef.current && !alertActiveRef.current) {
+        void soundRef.current.replayAsync();
+        alertActiveRef.current = true;
+      }
+    } else if (alertActiveRef.current) {
+      if (soundRef.current) {
+        void soundRef.current.stopAsync();
+      }
+      alertActiveRef.current = false;
+    }
     
     setSnapshot({ ...newSnapshot, status });
   });
