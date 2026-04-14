@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, Text, TouchableOpacity, View } from 'react-native';
+import { AlertTriangle, Bell, BellOff, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react-native';
 
 import { ScreenWrapper } from '@/components/layout/ScreenWrapper';
 import { Badge } from '@/components/ui/Badge';
@@ -14,6 +15,7 @@ import {
   useMyDrivers,
 } from '@/hooks/useGuardianApi';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
+import { useRealtimeDriver } from '@/hooks/useRealtimeDriver';
 import { useRealtimeGuardian } from '@/hooks/useRealtimeGuardian';
 import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus';
 import type { DetectionSeverity } from '@/types/detection';
@@ -28,22 +30,11 @@ function severityToVariant(severity?: DetectionSeverity) {
 }
 
 function formatDateTime(value?: string | null) {
-  if (!value) {
-    return 'Not available';
-  }
-
+  if (!value) return 'Not available';
   return new Date(value).toLocaleString();
 }
 
-function FilterChip({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) {
+function FilterChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -52,7 +43,7 @@ function FilterChip({
           ? 'bg-primary border-primary'
           : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
       }`}>
-      <Text className={active ? 'text-white font-semibold' : 'text-gray-600 dark:text-gray-300 font-medium'}>
+      <Text className={active ? 'text-white font-semibold text-xs' : 'text-gray-600 dark:text-gray-300 font-medium text-xs'}>
         {label}
       </Text>
     </TouchableOpacity>
@@ -70,12 +61,33 @@ function LoadingCard({ message }: { message: string }) {
   );
 }
 
+function EmptyState({ message }: { message: string }) {
+  return (
+    <Card>
+      <CardContent className="p-8 items-center">
+        <AlertTriangle size={32} color="#9ca3af" />
+        <Text className="text-gray-500 dark:text-gray-400 mt-3 text-center text-sm">
+          {message}
+        </Text>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function LogsScreen() {
   const { user } = useAuth();
+
   const profileQuery = useCurrentUserProfile();
   const role = profileQuery.data?.role;
   const isDriver = role === 'driver';
   const isGuardian = role === 'guardian';
+
+  const driversQuery = useMyDrivers({ enabled: isGuardian });
+
+  const driverIds = useMemo(() => {
+    if (!isGuardian || !driversQuery.data) return [];
+    return driversQuery.data.map((driver) => driver.id);
+  }, [isGuardian, driversQuery.data]);
 
   const [driverSeverity, setDriverSeverity] = useState<'ALL' | DetectionSeverity>('ALL');
   const [driverDays, setDriverDays] = useState(30);
@@ -84,10 +96,10 @@ export default function LogsScreen() {
   const [guardianUnreadOnly, setGuardianUnreadOnly] = useState(false);
   const [guardianDays, setGuardianDays] = useState(30);
   const [guardianPage, setGuardianPage] = useState(1);
+
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionTone, setActionTone] = useState<'success' | 'error'>('success');
 
-  const driversQuery = useMyDrivers({ enabled: isGuardian });
   const driverEventsQuery = useDriverEvents(
     {
       page: driverPage,
@@ -97,6 +109,7 @@ export default function LogsScreen() {
     },
     { enabled: isDriver },
   );
+
   const notificationsQuery = useGuardianNotifications(
     {
       page: guardianPage,
@@ -110,406 +123,346 @@ export default function LogsScreen() {
   const deleteEventMutation = useDeleteDriverEvent();
   const markReadMutation = useMarkGuardianNotificationRead();
 
-  useRealtimeGuardian(
-    isGuardian ? user?.id : undefined,
-    isGuardian ? (driversQuery.data ?? []).map((driver) => driver.id) : [],
-  );
+  useRealtimeGuardian(isGuardian ? user?.id : undefined, driverIds);
+  useRealtimeDriver(isDriver ? user?.id : undefined);
 
   const refreshLogs = useCallback(async () => {
     const tasks: Promise<{ error: Error | null }>[] = [profileQuery.refetch()];
 
-    if (isDriver) {
-      tasks.push(driverEventsQuery.refetch());
-    }
-
-    if (isGuardian) {
-      tasks.push(driversQuery.refetch(), notificationsQuery.refetch());
-    }
+    if (isDriver) tasks.push(driverEventsQuery.refetch());
+    if (isGuardian) tasks.push(driversQuery.refetch(), notificationsQuery.refetch());
 
     const results = await Promise.all(tasks);
-    const failed = results.find((result) => result.error);
+    const failed = results.find((r) => r.error);
 
-    if (failed?.error) {
-      throw failed.error;
-    }
+    if (failed?.error) throw failed.error;
   }, [driverEventsQuery, driversQuery, isDriver, isGuardian, notificationsQuery, profileQuery]);
 
-  const { refreshing, onRefresh, refreshError, clearRefreshError, lastUpdatedAt } =
-    usePullToRefresh(refreshLogs);
+  const { refreshing, onRefresh } = usePullToRefresh(refreshLogs);
 
   useRefreshOnFocus(onRefresh, { enabled: Boolean(user?.id) });
 
-  const driverPagination = useMemo(() => {
-    const pageSize = driverEventsQuery.data?.page_size ?? 10;
-    const total = driverEventsQuery.data?.total ?? 0;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const handleDeleteEvent = useCallback(
+    async (eventId: number) => {
+      try {
+        await deleteEventMutation.mutateAsync(eventId);
+        setActionMessage('Event deleted successfully.');
+        setActionTone('success');
+      } catch {
+        setActionMessage('Failed to delete event.');
+        setActionTone('error');
+      }
+      setTimeout(() => setActionMessage(null), 3000);
+    },
+    [deleteEventMutation],
+  );
 
-    return { totalPages, total };
-  }, [driverEventsQuery.data]);
+  const handleMarkRead = useCallback(
+    async (notificationId: number) => {
+      try {
+        await markReadMutation.mutateAsync(notificationId);
+        setActionMessage('Notification marked as read.');
+        setActionTone('success');
+      } catch {
+        setActionMessage('Failed to update notification.');
+        setActionTone('error');
+      }
+      setTimeout(() => setActionMessage(null), 3000);
+    },
+    [markReadMutation],
+  );
 
-  const guardianPagination = useMemo(() => {
-    const pageSize = notificationsQuery.data?.page_size ?? 10;
-    const total = notificationsQuery.data?.total ?? 0;
-    const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-    return { totalPages, total };
-  }, [notificationsQuery.data]);
+  // Pagination helpers
+  const driverTotalPages = Math.max(
+    1,
+    Math.ceil((driverEventsQuery.data?.total ?? 0) / 10),
+  );
+  const guardianTotalPages = Math.max(
+    1,
+    Math.ceil((notificationsQuery.data?.total ?? 0) / 10),
+  );
 
   return (
     <ScreenWrapper
       scroll
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-      <View>
-        <Text className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
-          {isGuardian ? 'Guardian Notifications' : 'Event History'}
-        </Text>
-        <Text className="text-gray-500 dark:text-gray-400 mt-2">
-          {isGuardian
-            ? 'Review alert notifications from monitored drivers.'
-            : 'Browse drowsiness events with filters and pagination.'}
-        </Text>
-      </View>
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      <Text className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+        {isGuardian ? 'Guardian Notifications' : 'Event History'}
+      </Text>
 
-      {lastUpdatedAt ? (
-        <Text className="text-xs text-gray-400 dark:text-gray-500">
-          Last updated {new Date(lastUpdatedAt).toLocaleTimeString()}
-        </Text>
-      ) : null}
+      {profileQuery.isLoading && <LoadingCard message="Loading..." />}
 
-      {refreshError ? (
-        <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20">
-          <CardContent className="p-4">
-            <Text className="text-red-700 dark:text-red-300">{refreshError}</Text>
-            <Text onPress={clearRefreshError} className="text-red-600 dark:text-red-400 mt-2 font-semibold">
-              Dismiss
-            </Text>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {actionMessage ? (
+      {/* Action feedback toast */}
+      {actionMessage && (
         <Card
-          className={
+          className={`mb-3 border ${
             actionTone === 'success'
-              ? 'border border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20'
-              : 'border border-red-300 bg-red-50 dark:bg-red-900/20'
-          }>
-          <CardContent className="p-4">
+              ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-900/20'
+              : 'border-red-300 bg-red-50 dark:bg-red-900/20'
+          }`}
+        >
+          <CardContent className="p-3">
             <Text
               className={
                 actionTone === 'success'
-                  ? 'text-emerald-700 dark:text-emerald-300'
-                  : 'text-red-700 dark:text-red-300'
-              }>
+                  ? 'text-emerald-700 dark:text-emerald-300 text-sm'
+                  : 'text-red-700 dark:text-red-300 text-sm'
+              }
+            >
               {actionMessage}
             </Text>
           </CardContent>
         </Card>
-      ) : null}
+      )}
 
-      {profileQuery.isLoading ? <LoadingCard message="Loading your log view..." /> : null}
-
-      {profileQuery.isError ? (
-        <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20">
-          <CardContent className="p-4">
-            <Text className="text-red-700 dark:text-red-300">Unable to determine which log view to show.</Text>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {!profileQuery.isLoading && !profileQuery.isError && !role ? (
-        <Card className="border border-amber-300 bg-amber-50 dark:bg-amber-900/20">
-          <CardContent className="p-4">
-            <Text className="text-amber-800 dark:text-amber-300">
-              Your account role is missing, so logs cannot be loaded yet.
-            </Text>
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {isDriver ? (
+      {/* ================================================================= */}
+      {/* DRIVER VIEW                                                       */}
+      {/* ================================================================= */}
+      {isDriver && (
         <>
-          <View>
-            <Text className="text-sm font-bold text-gray-500 tracking-wider uppercase mb-3">Severity</Text>
-            <View className="flex-row flex-wrap gap-2">
-              {DRIVER_SEVERITY_FILTERS.map((filter) => (
-                <FilterChip
-                  key={filter}
-                  label={filter}
-                  active={driverSeverity === filter}
-                  onPress={() => {
-                    setDriverSeverity(filter);
-                    setDriverPage(1);
-                  }}
-                />
-              ))}
-            </View>
+          {/* Severity Filters */}
+          <Text className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+            Severity
+          </Text>
+          <View className="flex-row flex-wrap gap-2 mb-3">
+            {DRIVER_SEVERITY_FILTERS.map((filter) => (
+              <FilterChip
+                key={filter}
+                label={filter}
+                active={driverSeverity === filter}
+                onPress={() => {
+                  setDriverSeverity(filter);
+                  setDriverPage(1);
+                }}
+              />
+            ))}
           </View>
 
-          <View>
-            <Text className="text-sm font-bold text-gray-500 tracking-wider uppercase mb-3">Time Window</Text>
-            <View className="flex-row flex-wrap gap-2">
-              {DAY_FILTERS.map((days) => (
-                <FilterChip
-                  key={days}
-                  label={`${days} days`}
-                  active={driverDays === days}
-                  onPress={() => {
-                    setDriverDays(days);
-                    setDriverPage(1);
-                  }}
-                />
-              ))}
-            </View>
+          {/* Day Filters */}
+          <Text className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+            Time Range
+          </Text>
+          <View className="flex-row flex-wrap gap-2 mb-4">
+            {DAY_FILTERS.map((days) => (
+              <FilterChip
+                key={days}
+                label={`${days} days`}
+                active={driverDays === days}
+                onPress={() => {
+                  setDriverDays(days);
+                  setDriverPage(1);
+                }}
+              />
+            ))}
           </View>
 
-          {driverEventsQuery.isLoading ? <LoadingCard message="Loading event history..." /> : null}
+          {/* Loading */}
+          {driverEventsQuery.isLoading && <LoadingCard message="Fetching events..." />}
 
-          {driverEventsQuery.isError ? (
-            <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20">
+          {/* Error */}
+          {driverEventsQuery.isError && (
+            <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20 mb-3">
               <CardContent className="p-4">
-                <Text className="text-red-700 dark:text-red-300">Unable to load drowsiness events.</Text>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {driverEventsQuery.data && driverEventsQuery.data.events.length === 0 ? (
-            <Card>
-              <CardContent className="p-4">
-                <Text className="text-gray-500 dark:text-gray-400">
-                  No events were found for the selected filters.
+                <Text className="text-red-700 dark:text-red-300 text-sm">
+                  Failed to load events. Pull down to retry.
                 </Text>
               </CardContent>
             </Card>
-          ) : null}
+          )}
 
-          {driverEventsQuery.data?.events.map((event) => (
-            <Card key={event.id}>
+          {/* Empty State */}
+          {!driverEventsQuery.isLoading &&
+            !driverEventsQuery.isError &&
+            (driverEventsQuery.data?.events?.length ?? 0) === 0 && (
+              <EmptyState message="No drowsiness events found for the selected filters." />
+            )}
+
+          {/* Event List */}
+          {(driverEventsQuery.data?.events ?? []).map((event) => (
+            <Card key={event.id} className="mb-3">
               <CardContent className="p-4">
-                <View className="flex-row items-start justify-between mb-3">
-                  <View className="flex-1 mr-3">
-                    <Text className="text-gray-900 dark:text-white font-semibold">
-                      {formatDateTime(event.created_at)}
-                    </Text>
-                    <Text className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-                      Duration: {event.duration_seconds?.toFixed(2) ?? '--'}s
-                    </Text>
-                    <Text className="text-gray-500 dark:text-gray-400 text-sm">
-                      EAR: {typeof event.ear_value === 'number' ? event.ear_value.toFixed(3) : '--'}
-                    </Text>
-                  </View>
-                  <Badge variant={severityToVariant(event.severity)}>{event.severity}</Badge>
+                <View className="flex-row items-center justify-between mb-2">
+                  <Badge variant={severityToVariant(event.severity)}>
+                    {event.severity}
+                  </Badge>
+                  <Text className="text-gray-400 dark:text-gray-500 text-xs">
+                    #{event.id}
+                  </Text>
                 </View>
 
-                <Button
-                  title={deleteEventMutation.isPending ? 'Deleting...' : 'Delete Event'}
-                  variant="ghost"
-                  loading={deleteEventMutation.isPending}
-                  onPress={async () => {
-                    try {
-                      setActionMessage(null);
-                      await deleteEventMutation.mutateAsync(event.id);
-                      setActionTone('success');
-                      setActionMessage('Event deleted successfully.');
-                    } catch (error) {
-                      setActionTone('error');
-                      setActionMessage(
-                        error instanceof Error ? error.message : 'Unable to delete this event.',
-                      );
-                    }
-                  }}
-                  className="self-start px-0 py-0"
-                  textClassName="text-danger dark:text-red-400"
-                />
+                <View className="flex-row justify-between mb-1">
+                  <Text className="text-gray-600 dark:text-gray-300 text-sm">
+                    EAR: {event.ear_value != null ? event.ear_value.toFixed(3) : '--'}
+                  </Text>
+                  <Text className="text-gray-600 dark:text-gray-300 text-sm">
+                    Duration: {event.duration_seconds != null ? `${event.duration_seconds.toFixed(1)}s` : '--'}
+                  </Text>
+                </View>
+
+                <Text className="text-gray-400 dark:text-gray-500 text-xs mb-3">
+                  {formatDateTime(event.created_at)}
+                </Text>
+
+                <TouchableOpacity
+                  className="flex-row items-center self-end"
+                  onPress={() => handleDeleteEvent(event.id)}
+                  disabled={deleteEventMutation.isPending}
+                >
+                  <Trash2 size={14} color="#ef4444" />
+                  <Text className="text-red-500 text-xs ml-1">Delete</Text>
+                </TouchableOpacity>
               </CardContent>
             </Card>
           ))}
 
-          {driverEventsQuery.data ? (
-            <Card>
-              <CardContent className="p-4 flex-row items-center justify-between">
-                <View>
-                  <Text className="text-gray-900 dark:text-white font-semibold">
-                    Page {driverPage} of {driverPagination.totalPages}
-                  </Text>
-                  <Text className="text-gray-500 dark:text-gray-400 text-sm">
-                    {driverPagination.total} matching events
-                  </Text>
-                </View>
-
-                <View className="flex-row gap-2">
-                  <Button
-                    title="Previous"
-                    variant="secondary"
-                    disabled={driverPage <= 1}
-                    onPress={() => setDriverPage((current) => Math.max(1, current - 1))}
-                    className="px-4 py-2"
-                  />
-                  <Button
-                    title="Next"
-                    variant="primary"
-                    disabled={driverPage >= driverPagination.totalPages}
-                    onPress={() =>
-                      setDriverPage((current) => Math.min(driverPagination.totalPages, current + 1))
-                    }
-                    className="px-4 py-2"
-                  />
-                </View>
-              </CardContent>
-            </Card>
-          ) : null}
+          {/* Pagination */}
+          {(driverEventsQuery.data?.total ?? 0) > 10 && (
+            <View className="flex-row items-center justify-center gap-4 mt-2 mb-4">
+              <TouchableOpacity
+                onPress={() => setDriverPage((p) => Math.max(1, p - 1))}
+                disabled={driverPage <= 1}
+                className={`p-2 rounded-full ${driverPage <= 1 ? 'opacity-30' : ''}`}
+              >
+                <ChevronLeft size={20} color="#6b7280" />
+              </TouchableOpacity>
+              <Text className="text-gray-600 dark:text-gray-300 text-sm font-medium">
+                Page {driverPage} of {driverTotalPages}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setDriverPage((p) => Math.min(driverTotalPages, p + 1))}
+                disabled={driverPage >= driverTotalPages}
+                className={`p-2 rounded-full ${driverPage >= driverTotalPages ? 'opacity-30' : ''}`}
+              >
+                <ChevronRight size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+          )}
         </>
-      ) : null}
+      )}
 
-      {isGuardian ? (
+      {/* ================================================================= */}
+      {/* GUARDIAN VIEW                                                     */}
+      {/* ================================================================= */}
+      {isGuardian && (
         <>
-          <View>
-            <Text className="text-sm font-bold text-gray-500 tracking-wider uppercase mb-3">Filter</Text>
-            <View className="flex-row flex-wrap gap-2">
+          {/* Guardian Filters */}
+          <View className="flex-row flex-wrap gap-2 mb-3">
+            <FilterChip
+              label={guardianUnreadOnly ? 'Unread Only' : 'All Notifications'}
+              active={guardianUnreadOnly}
+              onPress={() => {
+                setGuardianUnreadOnly((prev) => !prev);
+                setGuardianPage(1);
+              }}
+            />
+            {DAY_FILTERS.map((days) => (
               <FilterChip
-                label="All notifications"
-                active={!guardianUnreadOnly}
+                key={days}
+                label={`${days} days`}
+                active={guardianDays === days}
                 onPress={() => {
-                  setGuardianUnreadOnly(false);
+                  setGuardianDays(days);
                   setGuardianPage(1);
                 }}
               />
-              <FilterChip
-                label="Unread only"
-                active={guardianUnreadOnly}
-                onPress={() => {
-                  setGuardianUnreadOnly(true);
-                  setGuardianPage(1);
-                }}
-              />
-            </View>
+            ))}
           </View>
 
-          <View>
-            <Text className="text-sm font-bold text-gray-500 tracking-wider uppercase mb-3">Time Window</Text>
-            <View className="flex-row flex-wrap gap-2">
-              {DAY_FILTERS.map((days) => (
-                <FilterChip
-                  key={days}
-                  label={`${days} days`}
-                  active={guardianDays === days}
-                  onPress={() => {
-                    setGuardianDays(days);
-                    setGuardianPage(1);
-                  }}
-                />
-              ))}
-            </View>
-          </View>
+          {/* Loading */}
+          {notificationsQuery.isLoading && <LoadingCard message="Fetching notifications..." />}
 
-          {notificationsQuery.isLoading ? <LoadingCard message="Loading guardian notifications..." /> : null}
-
-          {notificationsQuery.isError ? (
-            <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20">
+          {/* Error */}
+          {notificationsQuery.isError && (
+            <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20 mb-3">
               <CardContent className="p-4">
-                <Text className="text-red-700 dark:text-red-300">
-                  Unable to load guardian notifications.
+                <Text className="text-red-700 dark:text-red-300 text-sm">
+                  Failed to load notifications. Pull down to retry.
                 </Text>
               </CardContent>
             </Card>
-          ) : null}
+          )}
 
-          {notificationsQuery.data && notificationsQuery.data.notifications.length === 0 ? (
-            <Card>
+          {/* Empty State */}
+          {!notificationsQuery.isLoading &&
+            !notificationsQuery.isError &&
+            (notificationsQuery.data?.notifications?.length ?? 0) === 0 && (
+              <EmptyState message="No notifications found for the selected filters." />
+            )}
+
+          {/* Notification List */}
+          {(notificationsQuery.data?.notifications ?? []).map((notification) => (
+            <Card
+              key={notification.id}
+              className={`mb-3 ${!notification.is_read ? 'border border-amber-200 dark:border-amber-800/50' : ''}`}
+            >
               <CardContent className="p-4">
-                <Text className="text-gray-500 dark:text-gray-400">
-                  No guardian notifications match the current filters.
-                </Text>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {notificationsQuery.data?.notifications.map((notification) => (
-            <Card key={notification.id}>
-              <CardContent className="p-4">
-                <View className="flex-row items-start justify-between mb-3">
-                  <View className="flex-1 mr-3">
-                    <Text className="text-gray-900 dark:text-white font-semibold">
-                      {notification.message}
+                <View className="flex-row items-center justify-between mb-2">
+                  <Badge variant={severityToVariant(notification.severity)}>
+                    {notification.severity}
+                  </Badge>
+                  <View className="flex-row items-center">
+                    {!notification.is_read && (
+                      <View className="w-2 h-2 rounded-full bg-amber-500 mr-2" />
+                    )}
+                    <Text className="text-gray-400 dark:text-gray-500 text-xs">
+                      #{notification.id}
                     </Text>
-                    <Text className="text-gray-500 dark:text-gray-400 text-sm mt-1">
-                      {notification.driver_name || notification.driver_email || notification.driver_id}
-                    </Text>
-                    <Text className="text-gray-400 dark:text-gray-500 text-xs mt-2">
-                      {formatDateTime(notification.created_at)}
-                    </Text>
-                  </View>
-
-                  <View className="items-end">
-                    <Badge variant={severityToVariant(notification.severity)}>{notification.severity}</Badge>
-                    <Badge variant={notification.is_read ? 'default' : 'warning'} className="mt-2">
-                      {notification.is_read ? 'READ' : 'UNREAD'}
-                    </Badge>
                   </View>
                 </View>
 
-                {!notification.is_read ? (
-                  <Button
-                    title={markReadMutation.isPending ? 'Updating...' : 'Mark as Read'}
-                    variant="secondary"
-                    loading={markReadMutation.isPending}
-                    onPress={async () => {
-                      try {
-                        setActionMessage(null);
-                        await markReadMutation.mutateAsync(notification.id);
-                        setActionTone('success');
-                        setActionMessage('Notification marked as read.');
-                      } catch (error) {
-                        setActionTone('error');
-                        setActionMessage(
-                          error instanceof Error
-                            ? error.message
-                            : 'Unable to update this notification.',
-                        );
-                      }
-                    }}
-                    className="self-start px-4 py-2"
-                  />
-                ) : null}
+                <Text className="text-gray-900 dark:text-white font-semibold text-sm mb-1">
+                  {notification.driver_name || notification.driver_email || 'Unknown Driver'}
+                </Text>
+
+                <Text className="text-gray-600 dark:text-gray-300 text-sm mb-1">
+                  {notification.message}
+                </Text>
+
+                <Text className="text-gray-400 dark:text-gray-500 text-xs mb-3">
+                  {formatDateTime(notification.created_at)}
+                </Text>
+
+                {!notification.is_read && (
+                  <TouchableOpacity
+                    className="flex-row items-center self-end"
+                    onPress={() => handleMarkRead(notification.id)}
+                    disabled={markReadMutation.isPending}
+                  >
+                    <BellOff size={14} color="#6b7280" />
+                    <Text className="text-gray-500 dark:text-gray-400 text-xs ml-1">
+                      Mark as read
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </CardContent>
             </Card>
           ))}
 
-          {notificationsQuery.data ? (
-            <Card>
-              <CardContent className="p-4 flex-row items-center justify-between">
-                <View>
-                  <Text className="text-gray-900 dark:text-white font-semibold">
-                    Page {guardianPage} of {guardianPagination.totalPages}
-                  </Text>
-                  <Text className="text-gray-500 dark:text-gray-400 text-sm">
-                    {guardianPagination.total} matching notifications
-                  </Text>
-                </View>
-
-                <View className="flex-row gap-2">
-                  <Button
-                    title="Previous"
-                    variant="secondary"
-                    disabled={guardianPage <= 1}
-                    onPress={() => setGuardianPage((current) => Math.max(1, current - 1))}
-                    className="px-4 py-2"
-                  />
-                  <Button
-                    title="Next"
-                    variant="primary"
-                    disabled={guardianPage >= guardianPagination.totalPages}
-                    onPress={() =>
-                      setGuardianPage((current) => Math.min(guardianPagination.totalPages, current + 1))
-                    }
-                    className="px-4 py-2"
-                  />
-                </View>
-              </CardContent>
-            </Card>
-          ) : null}
+          {/* Pagination */}
+          {(notificationsQuery.data?.total ?? 0) > 10 && (
+            <View className="flex-row items-center justify-center gap-4 mt-2 mb-4">
+              <TouchableOpacity
+                onPress={() => setGuardianPage((p) => Math.max(1, p - 1))}
+                disabled={guardianPage <= 1}
+                className={`p-2 rounded-full ${guardianPage <= 1 ? 'opacity-30' : ''}`}
+              >
+                <ChevronLeft size={20} color="#6b7280" />
+              </TouchableOpacity>
+              <Text className="text-gray-600 dark:text-gray-300 text-sm font-medium">
+                Page {guardianPage} of {guardianTotalPages}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setGuardianPage((p) => Math.min(guardianTotalPages, p + 1))}
+                disabled={guardianPage >= guardianTotalPages}
+                className={`p-2 rounded-full ${guardianPage >= guardianTotalPages ? 'opacity-30' : ''}`}
+              >
+                <ChevronRight size={20} color="#6b7280" />
+              </TouchableOpacity>
+            </View>
+          )}
         </>
-      ) : null}
+      )}
     </ScreenWrapper>
   );
 }

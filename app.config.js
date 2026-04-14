@@ -9,6 +9,13 @@ export default {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
 
+    updates: {
+      url: "https://u.expo.dev/8a051455-fefd-4363-a224-3789ae6bf654"
+    },
+    runtimeVersion: {
+      policy: "appVersion",
+    },
+
     ios: {
       supportsTablet: true,
     },

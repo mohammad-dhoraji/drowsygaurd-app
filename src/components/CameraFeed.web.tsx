@@ -6,6 +6,7 @@ import React, {
   useState,
 } from 'react';
 import type { CSSProperties } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
@@ -135,6 +136,7 @@ export default function CameraFeed({
   onSnapshotChange,
   sessionId,
 }: CameraFeedProps) {
+  const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const frameRequestRef = useRef<number | null>(null);
@@ -223,6 +225,12 @@ export default function CameraFeed({
           throw new Error(result.error.message);
         }
 
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['driver-events'] }),
+          queryClient.invalidateQueries({ queryKey: ['driver-summary'] }),
+          queryClient.invalidateQueries({ queryKey: ['driver-sessions'] }),
+        ]);
+
         updateSnapshot({
           backendStatus: 'sent',
           backendMessage:
@@ -240,7 +248,7 @@ export default function CameraFeed({
         });
       }
     },
-    [sessionId, updateSnapshot],
+    [queryClient, sessionId, updateSnapshot],
   );
 
   useEffect(() => {

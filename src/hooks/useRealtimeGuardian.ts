@@ -1,76 +1,86 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { SUPABASE_CONFIGURED, supabase } from '@/lib/supabase';
 
 export function useRealtimeGuardian(guardianId?: string, driverIds: string[] = []) {
   const queryClient = useQueryClient();
-  const driverIdsKey = driverIds.join(',');
+
+  // ✅ Stabilize driverIds (order + reference safe)
+  const driverIdsKey = useMemo(() => {
+    if (!driverIds || driverIds.length === 0) return '';
+    return [...driverIds].sort().join(',');
+  }, [driverIds]);
 
   useEffect(() => {
     if (!SUPABASE_CONFIGURED || !guardianId) {
-      return undefined;
+      return;
     }
 
-    const channels = [
-      supabase
-        .channel(`guardian_notifications_${guardianId}`)
+    const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    // ✅ Guardian notifications channel
+    const notificationsChannel = supabase
+      .channel(`guardian_notifications_${guardianId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'guardian_notifications',
+          filter: `guardian_id=eq.${guardianId}`,
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
+          queryClient.invalidateQueries({ queryKey: ['guardian-notifications'] });
+        },
+      )
+      .subscribe();
+
+    channels.push(notificationsChannel);
+
+    // ✅ Driver-related channels (only if drivers exist)
+    if (driverIds.length > 0 && driverIdsKey) {
+      const driverFilter = `driver_id=in.(${driverIdsKey})`;
+
+      const driverChannel = supabase
+        .channel(`guardian_sessions_${guardianId}`)
         .on(
           'postgres_changes',
           {
             event: '*',
             schema: 'public',
-            table: 'guardian_notifications',
-            filter: `guardian_id=eq.${guardianId}`,
+            table: 'sessions',
+            filter: driverFilter,
           },
           () => {
-            void queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
-            void queryClient.invalidateQueries({ queryKey: ['guardian-notifications'] });
+            queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
+            queryClient.invalidateQueries({ queryKey: ['guardian-drivers'] });
           },
         )
-        .subscribe(),
-    ];
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'drowsiness_events',
+            filter: driverFilter,
+          },
+          () => {
+            queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
+            queryClient.invalidateQueries({ queryKey: ['guardian-notifications'] });
+          },
+        )
+        .subscribe();
 
-    if (driverIdsKey.length > 0) {
-      const driverFilter = `driver_id=in.(${driverIdsKey})`;
-
-      channels.push(
-        supabase
-          .channel(`guardian_sessions_${guardianId}`)
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'sessions',
-              filter: driverFilter,
-            },
-            () => {
-              void queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
-              void queryClient.invalidateQueries({ queryKey: ['guardian-drivers'] });
-            },
-          )
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'drowsiness_events',
-              filter: driverFilter,
-            },
-            () => {
-              void queryClient.invalidateQueries({ queryKey: ['guardian-dashboard', guardianId] });
-              void queryClient.invalidateQueries({ queryKey: ['guardian-notifications'] });
-            },
-          )
-          .subscribe(),
-      );
+      channels.push(driverChannel);
     }
 
+    // ✅ Cleanup (important)
     return () => {
       channels.forEach((channel) => {
-        void supabase.removeChannel(channel);
+        supabase.removeChannel(channel);
       });
     };
-  }, [guardianId, queryClient, driverIdsKey]);
+  }, [guardianId, driverIdsKey, queryClient]);
 }
