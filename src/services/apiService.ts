@@ -103,6 +103,12 @@ export interface SessionInfo {
   highest_severity: DetectionSeverity;
 }
 
+export interface SessionStartResponse {
+  session_id: string;
+  status: string;
+  message: string;
+}
+
 export interface GuardianSummary {
   id: string;
   name: string | null;
@@ -196,7 +202,17 @@ function getEventFingerprint(payload: DriverEventCreatePayload) {
   ].join("|");
 }
 
+let cachedAccessToken: string | null = null;
+
+export function setGlobalAccessToken(token: string | null) {
+  cachedAccessToken = token;
+}
+
 async function getAccessToken(): Promise<ApiResult<string>> {
+  if (cachedAccessToken) {
+    return { data: cachedAccessToken, error: null };
+  }
+
   const {
     data: { session },
     error,
@@ -456,5 +472,11 @@ export function updateDriverLocation(payload: DriverLocationUpdatePayload) {
   return request<DriverLocationUpdateResponse>("/location/update", {
     method: "POST",
     body: payload,
+  });
+}
+
+export function startDrivingSession() {
+  return request<SessionStartResponse>("/logs/sessions/start", {
+    method: "POST",
   });
 }

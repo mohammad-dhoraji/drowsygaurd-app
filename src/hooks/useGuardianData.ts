@@ -58,6 +58,13 @@ interface GuardianNotificationRow {
   created_at: string;
 }
 
+interface DriverLocationRow {
+  driver_id: string;
+  lat: number | null;
+  lng: number | null;
+  updated_at: string | null;
+}
+
 export interface DriverOverview {
   id: string;
   name: string;
@@ -154,34 +161,34 @@ function formatDuration(seconds: number): string {
   return `${hours}h ${minutes}m`;
 }
 
-function extractLocation(session: SessionRow | null): GuardianLocationSnapshot | null {
-  if (!session) {
+function extractLocation(session: SessionRow | null, location: DriverLocationRow | null): GuardianLocationSnapshot | null {
+  if (!session && !location) {
     return null;
   }
 
-  const latitude = safeNumber(session.latitude ?? session.lat ?? null);
-  const longitude = safeNumber(session.longitude ?? session.lng ?? null);
+  const latitude = safeNumber(location?.lat ?? session?.latitude ?? session?.lat ?? null);
+  const longitude = safeNumber(location?.lng ?? session?.longitude ?? session?.lng ?? null);
 
   if (latitude === null || longitude === null) {
     return null;
   }
 
   const headingValue =
-    typeof session.heading === 'string' || typeof session.heading === 'number'
+    typeof session?.heading === 'string' || typeof session?.heading === 'number'
       ? String(session.heading)
       : 'Unknown';
   const accuracyValue =
-    typeof session.accuracy === 'string' || typeof session.accuracy === 'number'
+    typeof session?.accuracy === 'string' || typeof session?.accuracy === 'number'
       ? String(session.accuracy)
       : 'N/A';
 
   return {
-    label: session.location_label ?? 'Current position',
+    label: session?.location_label ?? 'Current position',
     latitude,
     longitude,
     heading: headingValue,
     accuracy: accuracyValue,
-    updatedAt: session.updated_at ?? session.started_at,
+    updatedAt: location?.updated_at ?? session?.updated_at ?? session?.started_at ?? new Date().toISOString(),
   };
 }
 
@@ -226,7 +233,7 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
   const startOfDay = new Date();
   startOfDay.setHours(0, 0, 0, 0);
 
-  const [driverProfilesResponse, activeSessionsResponse, todaySessionsResponse, eventsResponse, notificationsResponse] =
+  const [driverProfilesResponse, activeSessionsResponse, todaySessionsResponse, eventsResponse, notificationsResponse, locationsResponse] =
     await Promise.all([
       supabase
         .from('profiles')
@@ -255,6 +262,10 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
         .eq('guardian_id', guardianId)
         .order('created_at', { ascending: false })
         .limit(50),
+      supabase
+        .from('driver_live_location')
+        .select('driver_id, lat, lng, updated_at')
+        .in('driver_id', driverIds)
     ]);
 
   if (driverProfilesResponse.error) throw driverProfilesResponse.error;
@@ -262,12 +273,19 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
   if (todaySessionsResponse.error) throw todaySessionsResponse.error;
   if (eventsResponse.error) throw eventsResponse.error;
   if (notificationsResponse.error) throw notificationsResponse.error;
+  if (locationsResponse.error) throw locationsResponse.error;
 
   const driverProfiles = (driverProfilesResponse.data ?? []) as ProfileRow[];
   const activeSessions = (activeSessionsResponse.data ?? []) as SessionRow[];
   const sessionsToday = (todaySessionsResponse.data ?? []) as SessionRow[];
   const recentEvents = (eventsResponse.data ?? []) as DrowsinessEventRow[];
   const notifications = (notificationsResponse.data ?? []) as GuardianNotificationRow[];
+  const locations = (locationsResponse.data ?? []) as DriverLocationRow[];
+
+  const locationByDriver = new Map<string, DriverLocationRow>();
+  for (const loc of locations) {
+    locationByDriver.set(loc.driver_id, loc);
+  }
 
   const activeSessionByDriver = new Map<string, SessionRow>();
   for (const session of activeSessions) {
@@ -286,6 +304,7 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
   const drivers: DriverOverview[] = driverProfiles.map((driver) => {
     const activeSession = activeSessionByDriver.get(driver.id) ?? null;
     const latestEvent = latestEventByDriver.get(driver.id) ?? null;
+    const locationSnapshot = locationByDriver.get(driver.id) ?? null;
 
     const severity = latestEvent?.severity ?? null;
     const status = activeSession ? severityToStatus(severity) : 'Offline';
@@ -300,7 +319,7 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
       alertLevel: severityToAlertLabel(severity),
       speedKph: Math.round(speed),
       routeName: activeSession?.route_name ?? 'Unknown Route',
-      lastUpdated: latestEvent?.created_at ?? activeSession?.started_at ?? driver.created_at,
+      lastUpdated: locationSnapshot?.updated_at ?? latestEvent?.created_at ?? activeSession?.started_at ?? driver.created_at,
       activeSessionId: activeSession?.id ?? null,
     };
   });
@@ -333,7 +352,7 @@ async function fetchGuardianDashboardData(guardianId: string): Promise<GuardianD
     totalDrivingSecondsToday,
     minorAlertsToday,
     highAlertsToday,
-    location: extractLocation(activeSession),
+    location: extractLocation(activeSession, activeSession ? (locationByDriver.get(activeSession.driver_id) ?? null) : null),
   };
 }
 

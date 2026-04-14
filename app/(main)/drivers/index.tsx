@@ -11,11 +11,10 @@ import {
 import { Header } from "@/components/layout/Header";
 import { ScreenWrapper } from "@/components/layout/ScreenWrapper";
 import { Badge } from "@/components/ui/Badge";
-import { API_CONFIGURED } from "@/services/apiService";
+import { API_CONFIGURED, startDrivingSession } from "@/services/apiService";
 import { useAuth } from "@/features/auth/hooks/useAuth";
 import { useCurrentUserProfile } from "@/hooks/useCurrentUserProfile";
 import { useLiveLocationTracking } from "@/hooks/useLiveLocationTracking";
-import { useDriverSession } from "@/hooks/useDriverSession";
 import { useDriverStore } from "@/state/stores/driverStore";
 import {
   DEFAULT_DETECTION_SNAPSHOT,
@@ -59,10 +58,13 @@ export default function DriversScreen() {
   const { session, user } = useAuth();
   const { data: profile, isLoading: isProfileLoading } =
     useCurrentUserProfile();
-  const { data: activeSession, isLoading: isSessionLoading } = useDriverSession(
-    user?.id,
-  );
+  
+  // Local state management for session
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  
   const [snapshot, setSnapshot] = useState<DetectionSnapshot>(
     DEFAULT_DETECTION_SNAPSHOT,
   );
@@ -203,8 +205,40 @@ export default function DriversScreen() {
           </Text>
           {!isSessionActive ? (
             <Button
-              title="Start Session"
-              onPress={() => setIsSessionActive(true)}
+              title={isCreatingSession ? "Starting Session..." : "Start Session"}
+              onPress={async () => {
+                if (!API_CONFIGURED) {
+                  setSessionError("Backend API is not configured");
+                  return;
+                }
+                
+                setIsCreatingSession(true);
+                setSessionError(null);
+                
+                try {
+                  const result = await startDrivingSession();
+                  
+                  if (result.error) {
+                    setSessionError(result.error.message);
+                    setIsCreatingSession(false);
+                    return;
+                  }
+                  
+                  if (result.data?.session_id) {
+                    setSessionId(result.data.session_id);
+                    setIsSessionActive(true);
+                    setIsCreatingSession(false);
+                  } else {
+                    setSessionError("No session ID returned from server");
+                    setIsCreatingSession(false);
+                  }
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "Unknown error";
+                  setSessionError(message);
+                  setIsCreatingSession(false);
+                }
+              }}
+              disabled={isCreatingSession}
               className="bg-emerald-500 hover:bg-emerald-600 w-full mb-3 text-white"
             >
               <ActivitySquare size={20} className="mr-2" />
@@ -214,13 +248,22 @@ export default function DriversScreen() {
               title="End Session"
               onPress={() => {
                 setIsSessionActive(false);
+                setSessionId(null);
                 setSnapshot(DEFAULT_DETECTION_SNAPSHOT);
+                setSessionError(null);
               }}
-            
               className="bg-red-500 hover:bg-red-600 w-full text-white"
             >
               <ShieldAlert size={20} className="mr-2" />
             </Button>
+          )}
+          
+          {sessionError && (
+            <View className="mt-3 bg-red-50 dark:bg-red-900/20 p-3 rounded-lg border border-red-200 dark:border-red-800/50">
+              <Text className="text-red-700 dark:text-red-300 text-sm">
+                {sessionError}
+              </Text>
+            </View>
           )}
         </CardContent>
       </Card>
@@ -230,7 +273,7 @@ export default function DriversScreen() {
           <CameraFeed
             accessToken={session?.access_token ?? null}
             onSnapshotChange={setSnapshot}
-            sessionId={activeSession?.id ?? null}
+            sessionId={sessionId}
           />
 
           <Text className="text-lg font-bold text-gray-900 dark:text-white mb-3 mt-6">
@@ -387,11 +430,11 @@ export default function DriversScreen() {
             Current session
           </Text>
           <Text className="text-gray-500 dark:text-gray-400 mt-1 text-sm leading-6">
-            {isSessionLoading
-              ? "Checking for an active driving session..."
-              : activeSession?.id
-                ? `Guardian notifications can be triggered for repeated events in session ${activeSession.id}.`
-                : "No active session was found. Local alerts still work, but guardian notifications need a session id on the backend."}
+            {isCreatingSession
+              ? "Creating session..."
+              : isSessionActive && sessionId
+                ? `Session active (${sessionId.slice(0, 8)}...). Guardian notifications enabled for repeated events.`
+                : "No session active. Click 'Start Session' to begin monitoring."}
           </Text>
         </CardContent>
       </Card>

@@ -12,6 +12,7 @@ import { Platform } from 'react-native';
 
 import { signInWithGoogleOAuth } from '@/features/auth/services/googleOAuth';
 import { SUPABASE_CONFIGURED, supabase } from '@/lib/supabase';
+import { setGlobalAccessToken } from '@/services/apiService';
 
 interface AuthUser {
   id: string;
@@ -48,8 +49,13 @@ function mapSupabaseUser(user: User | null): AuthUser | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSessionState] = useState<Session | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+
+  const setSession = useCallback((newSession: Session | null) => {
+    setSessionState(newSession);
+    setGlobalAccessToken(newSession?.access_token ?? null);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
