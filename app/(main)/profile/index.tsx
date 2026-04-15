@@ -448,7 +448,7 @@ export default function ProfileScreen() {
             <Text className="text-xl font-bold text-gray-900 dark:text-white mb-4">App Theme</Text>
             
             <View className="space-y-2 mb-6">
-              {(['light', 'dark', 'system'] as const).map((theme) => (
+              {([ 'system'] as const).map((theme) => (
                 <TouchableOpacity
                   key={theme}
                   activeOpacity={0.7}
