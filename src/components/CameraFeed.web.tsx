@@ -203,6 +203,7 @@ export default function CameraFeed({
       eventType?: 'EYES_CLOSED' | 'NO_FACE';
     }) => {
       if (!API_CONFIGURED) {
+        console.warn('⚠️ API_CONFIGURED is false - backend sync disabled');
         updateSnapshot({
           backendStatus: 'disabled',
           backendMessage:
@@ -213,17 +214,36 @@ export default function CameraFeed({
       }
 
       try {
-        const result = await createDriverEvent({
+        // Validate payload
+        if (!severity || !['LOW', 'MEDIUM', 'HIGH'].includes(severity)) {
+          throw new Error(`Invalid severity: ${severity}`);
+        }
+        if (durationMs < 0) {
+          throw new Error(`Invalid duration: ${durationMs}ms`);
+        }
+        if (isNaN(ear) || !isFinite(ear)) {
+          throw new Error(`Invalid EAR value: ${ear}`);
+        }
+
+        const payload = {
           ear_value: ear,
           duration_seconds: Number((durationMs / 1000).toFixed(2)),
           severity,
           event_type: eventType,
-          session_id: sessionId,
-        });
+          session_id: sessionId ?? undefined,
+        };
+
+        console.log('📤 SYNC_EVENT_PAYLOAD:', payload);
+
+        const result = await createDriverEvent(payload);
+
+        console.log('📡 SYNC_EVENT_RESPONSE:', result);
 
         if (result.error) {
           throw new Error(result.error.message);
         }
+
+        console.log('✅ EVENT_SYNCED_SUCCESS: ID', result.data?.id);
 
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['driver-events'] }),
@@ -238,12 +258,12 @@ export default function CameraFeed({
           lastEventAt: new Date().toISOString(),
         });
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Failed to sync alert to the backend.';
+        console.error('❌ SYNC_EVENT_ERROR:', errorMessage, error);
         updateSnapshot({
           backendStatus: 'error',
-          backendMessage:
-            error instanceof Error
-              ? error.message
-              : 'Failed to sync alert to the backend.',
+          backendMessage: errorMessage,
           lastEventAt: new Date().toISOString(),
         });
       }
@@ -451,7 +471,7 @@ export default function CameraFeed({
               }
             }
 
-            if (evaluation.shouldTrigger && severity) {
+            if (severity) {
               console.log('Drowsiness alert triggered:', evaluation.eventType, evaluation.closureDurationMs || evaluation.noFaceDurationMs, 'ms');
               await syncEvent({
                 ear: evaluation.effectiveEar ?? 0,

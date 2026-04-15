@@ -38,18 +38,15 @@ export default function LocationScreen() {
   const guardianId = user?.id;
   const profileQuery = useCurrentUserProfile();
   const dashboardQuery = useGuardianDashboardData(guardianId);
-
+  console.log("user from auth:", user);
   const driverIds = useMemo(
     () => dashboardQuery.data?.driverIds ?? [],
     [dashboardQuery.data?.driverIds],
   );
-
+  console.log("dashboard driverIds:", dashboardQuery.data?.driverIds);
   useRealtimeGuardian(guardianId, driverIds);
 
-  const liveLocationQuery = useGuardianLiveLocation(
-    guardianId,
-    dashboardQuery.data?.driverIds ?? [],
-  );
+  const liveLocationQuery = useGuardianLiveLocation(guardianId, driverIds);
 
   const refreshData = useCallback(async () => {
     await Promise.all([dashboardQuery.refetch(), liveLocationQuery.refetch()]);

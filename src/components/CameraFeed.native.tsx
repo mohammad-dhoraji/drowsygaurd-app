@@ -60,6 +60,7 @@ export default function CameraFeed({ onSnapshotChange, sessionId }: CameraFeedPr
       eventType?: 'EYES_CLOSED' | 'NO_FACE';
     }) => {
       if (!API_CONFIGURED) {
+        console.warn('⚠️ API_CONFIGURED is false - backend sync disabled');
         setSnapshot((prev) => ({
           ...prev,
           backendStatus: 'disabled',
@@ -75,17 +76,36 @@ export default function CameraFeed({ onSnapshotChange, sessionId }: CameraFeedPr
       syncingRef.current = true;
 
       try {
-        const result = await createDriverEvent({
+        // Validate payload
+        if (!severity || !['LOW', 'MEDIUM', 'HIGH'].includes(severity)) {
+          throw new Error(`Invalid severity: ${severity}`);
+        }
+        if (durationMs < 0) {
+          throw new Error(`Invalid duration: ${durationMs}ms`);
+        }
+        if (isNaN(ear) || !isFinite(ear)) {
+          throw new Error(`Invalid EAR value: ${ear}`);
+        }
+
+        const payload = {
           ear_value: ear,
           duration_seconds: Number((durationMs / 1000).toFixed(2)),
           severity,
           event_type: eventType,
           session_id: sessionId ?? undefined,
-        });
+        };
+
+        console.log('📤 SYNC_EVENT_PAYLOAD (Native):', payload);
+
+        const result = await createDriverEvent(payload);
+
+        console.log('📡 SYNC_EVENT_RESPONSE (Native):', result);
 
         if (result.error) {
           throw new Error(result.error.message);
         }
+
+        console.log('✅ EVENT_SYNCED_SUCCESS (Native): ID', result.data?.id);
 
         // Invalidate React Query caches so Home and Logs pages update
         await Promise.all([
@@ -102,13 +122,13 @@ export default function CameraFeed({ onSnapshotChange, sessionId }: CameraFeedPr
           lastEventAt: new Date().toISOString(),
         }));
       } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : 'Failed to sync alert to the backend.';
+        console.error('❌ SYNC_EVENT_ERROR (Native):', errorMessage, error);
         setSnapshot((prev) => ({
           ...prev,
           backendStatus: 'error',
-          backendMessage:
-            error instanceof Error
-              ? error.message
-              : 'Failed to sync alert to the backend.',
+          backendMessage: errorMessage,
           lastEventAt: new Date().toISOString(),
         }));
       } finally {
@@ -174,7 +194,7 @@ export default function CameraFeed({ onSnapshotChange, sessionId }: CameraFeedPr
 
     if (alertVisible) {
       if (soundRef.current && !alertActiveRef.current) {
-        void soundRef.current.replayAsync();
+        void soundRef.current.replayAsync();  
         alertActiveRef.current = true;
       }
     } else if (alertActiveRef.current) {
@@ -189,7 +209,7 @@ export default function CameraFeed({ onSnapshotChange, sessionId }: CameraFeedPr
     // =====================================================================
     // Backend sync: send event when drowsiness is confirmed
     // =====================================================================
-    if (shouldTrigger && newSnapshot.severity) {
+    if ( newSnapshot.severity) {
       void syncEvent({
         ear: newSnapshot.ear ?? 0,
         durationMs:

@@ -80,7 +80,7 @@ export default function ProfileScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   
   const [showThemeModal, setShowThemeModal] = useState(false);
-  const [selectedTheme, setSelectedTheme] = useState<'light' | 'dark' | 'system'>('system');
+  const [selectedTheme, setSelectedTheme] = useState< 'system'>('system');
 
   const refreshProfile = useCallback(async () => {
     const tasks: Promise<{ error: Error | null }>[] = [profileQuery.refetch()];

@@ -383,10 +383,18 @@ export async function createDriverEvent(payload: DriverEventCreatePayload) {
     lastEventFingerprint.key === fingerprint &&
     now - lastEventFingerprint.createdAt < EVENT_DEDUPLICATION_WINDOW_MS
   ) {
+    console.log(
+      `⏭️ EVENT_DEDUPLICATED: fingerprint="${fingerprint}" | window=${EVENT_DEDUPLICATION_WINDOW_MS}ms | age=${now - lastEventFingerprint.createdAt}ms`
+    );
     return { data: null, error: null } satisfies ApiResult<DriverEvent>;
   }
 
   lastEventFingerprint = { key: fingerprint, createdAt: now };
+
+  console.log(
+    `📤 CREATING_DRIVER_EVENT: session_id="${payload.session_id}" | severity="${payload.severity}" | ` +
+    `ear=${payload.ear_value.toFixed(3)} | duration=${payload.duration_seconds}s | event_type="${payload.event_type}"`
+  );
 
   const result = await request<DriverEvent>("/logs/events", {
     method: "POST",
@@ -394,7 +402,10 @@ export async function createDriverEvent(payload: DriverEventCreatePayload) {
   });
 
   if (result.error) {
+    console.error(`❌ CREATE_EVENT_ERROR: status=${result.error.status} | message="${result.error.message}"`);
     lastEventFingerprint = null;
+  } else {
+    console.log(`✅ CREATE_EVENT_SUCCESS: event_id=${result.data?.id}`);
   }
 
   return result;

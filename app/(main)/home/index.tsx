@@ -87,7 +87,8 @@ export default function HomeScreen() {
   // ✅ SAFE memo
   const driverIds = useMemo(() => {
     if (!isGuardian || !driversQuery.data) return [];
-    return driversQuery.data.map((d) => d.id);
+    return driversQuery.data.map((d) => d.driver_id);
+    
   }, [isGuardian, driversQuery.data]);
 
   const summaryQuery = useEventSummary(30, { enabled: isDriver });

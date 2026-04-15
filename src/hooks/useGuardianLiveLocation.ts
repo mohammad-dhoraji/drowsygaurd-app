@@ -19,31 +19,25 @@ export interface DriverLiveLocation {
 }
 
 function toNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
 
   if (typeof value === 'string') {
     const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
+    if (Number.isFinite(parsed)) return parsed;
   }
 
   return null;
 }
 
-function toDriverLiveLocation(row: DriverLiveLocationRow | null | undefined): DriverLiveLocation | null {
-  if (!row?.driver_id) {
-    return null;
-  }
+function toDriverLiveLocation(
+  row: DriverLiveLocationRow | null | undefined
+): DriverLiveLocation | null {
+  if (!row?.driver_id) return null;
 
   const lat = toNumber(row.lat);
   const lng = toNumber(row.lng);
 
-  if (lat === null || lng === null) {
-    return null;
-  }
+  if (lat === null || lng === null) return null;
 
   return {
     userId: row.driver_id,
@@ -54,92 +48,102 @@ function toDriverLiveLocation(row: DriverLiveLocationRow | null | undefined): Dr
 }
 
 function sortLocations(locations: DriverLiveLocation[]) {
-  return [...locations].sort((left, right) => {
-    return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
-  });
+  return [...locations].sort(
+    (a, b) =>
+      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
 }
 
-export function useGuardianLiveLocation(guardianId?: string, driverIds: string[] = []) {
+export function useGuardianLiveLocation(
+  guardianId?: string,
+  driverIds: string[] = []
+) {
   const queryClient = useQueryClient();
-  const driverIdsKey = driverIds.join(',');
+
+  // ✅ stabilize driverIds (prevents re-render loops)
+  const stableDriverIds = useMemo(
+    () => (Array.isArray(driverIds) ? driverIds : []),
+    [JSON.stringify(driverIds)]
+  );
+
+  const driverIdsKey = useMemo(
+    () => stableDriverIds.join(','),
+    [stableDriverIds]
+  );
+
   const queryKey = useMemo(
     () => ['guardian-live-location', guardianId, driverIdsKey] as const,
-    [driverIdsKey, guardianId],
+    [guardianId, driverIdsKey]
   );
 
   const query = useQuery({
     queryKey,
-    enabled: Boolean(guardianId) && driverIds.length > 0 && SUPABASE_CONFIGURED,
+    enabled:
+      Boolean(guardianId) &&
+      stableDriverIds.length > 0 &&
+      SUPABASE_CONFIGURED,
+
+    // ✅ HARD GUARD (prevents invalid SQL → 500)
     queryFn: async () => {
+      if (!stableDriverIds.length) {
+        console.warn(
+          '[useGuardianLiveLocation] Skipping query (no driverIds)'
+        );
+        return [];
+      }
+
       console.log('[useGuardianLiveLocation] Fetching live locations', {
         guardianId,
-        driverIds,
-        driverIdsCount: driverIds.length,
+        driverIds: stableDriverIds,
       });
 
       const { data, error } = await supabase
         .from('driver_live_location')
         .select('*')
-        .in('driver_id', driverIds)
+        .in('driver_id', stableDriverIds)
         .order('updated_at', { ascending: false });
 
       if (error) {
-        console.error('[useGuardianLiveLocation] Query failed:', {
-          error,
-          errorMessage: error.message,
-          driverIds,
-        });
+        console.error('[useGuardianLiveLocation] Query failed:', error);
         throw error;
       }
 
-      console.log('[useGuardianLiveLocation] Query successful', {
-        rowCount: (data ?? []).length,
-      });
-
       return sortLocations(
-        ((data ?? []) as DriverLiveLocationRow[])
+        (data ?? [])
           .map((row) => toDriverLiveLocation(row))
-          .filter((location): location is DriverLiveLocation => location !== null),
+          .filter(
+            (location): location is DriverLiveLocation =>
+              location !== null
+          )
       );
     },
+
     staleTime: 10 * 1000,
+    retry: false, // ✅ stop retry loops
   });
 
+  // ✅ REALTIME SUBSCRIPTION (fixed)
   useEffect(() => {
-    if (!guardianId || driverIds.length === 0 || !SUPABASE_CONFIGURED) {
-      return undefined;
+    if (
+      !guardianId ||
+      stableDriverIds.length === 0 ||
+      !SUPABASE_CONFIGURED
+    ) {
+      return;
     }
 
+    if (!driverIdsKey) return; // 🔥 prevents "in()" crash
+
     const filter = `driver_id=in.(${driverIdsKey})`;
-    console.log('[useGuardianLiveLocation] Setting up real-time subscription', {
+
+    console.log('[useGuardianLiveLocation] Subscribing', {
       guardianId,
       filter,
-      driverIdsCount: driverIds.length,
     });
 
     const channel = supabase
       .channel(`guardian_live_location_${guardianId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'driver_live_location',
-          filter,
-        },
-        (payload) => {
-          const nextLocation = toDriverLiveLocation(payload.new as DriverLiveLocationRow);
 
-          if (!nextLocation) {
-            return;
-          }
-
-          queryClient.setQueryData<DriverLiveLocation[]>(queryKey, (current = []) => {
-            const remaining = current.filter((location) => location.userId !== nextLocation.userId);
-            return sortLocations([nextLocation, ...remaining]);
-          });
-        },
-      )
       .on(
         'postgres_changes',
         {
@@ -149,24 +153,47 @@ export function useGuardianLiveLocation(guardianId?: string, driverIds: string[]
           filter,
         },
         (payload) => {
-          const nextLocation = toDriverLiveLocation(payload.new as DriverLiveLocationRow);
-
-          if (!nextLocation) {
-            return;
-          }
-
-          queryClient.setQueryData<DriverLiveLocation[]>(queryKey, (current = []) => {
-            const remaining = current.filter((location) => location.userId !== nextLocation.userId);
-            return sortLocations([nextLocation, ...remaining]);
-          });
-        },
+          handleRealtimeUpdate(payload.new);
+        }
       )
+
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'driver_live_location',
+          filter,
+        },
+        (payload) => {
+          handleRealtimeUpdate(payload.new);
+        }
+      )
+
       .subscribe();
 
+    function handleRealtimeUpdate(newRow: any) {
+      const nextLocation = toDriverLiveLocation(newRow);
+
+      if (!nextLocation) return;
+
+      queryClient.setQueryData<DriverLiveLocation[]>(
+        queryKey,
+        (current = []) => {
+          const filtered = current.filter(
+            (loc) => loc.userId !== nextLocation.userId
+          );
+
+          return sortLocations([nextLocation, ...filtered]);
+        }
+      );
+    }
+
     return () => {
-      void supabase.removeChannel(channel);
+      console.log('[useGuardianLiveLocation] Unsubscribing');
+      supabase.removeChannel(channel);
     };
-  }, [driverIds.length, driverIdsKey, guardianId, queryClient, queryKey]);
+  }, [guardianId, driverIdsKey, stableDriverIds.length, queryClient, queryKey]);
 
   return query;
 }
