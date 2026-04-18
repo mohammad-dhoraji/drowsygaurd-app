@@ -8,11 +8,11 @@ import React, {
   type ReactNode,
 } from 'react';
 import type { Session, User } from '@supabase/supabase-js';
-import { Platform } from 'react-native';
 
 import { signInWithGoogleOAuth } from '@/features/auth/services/googleOAuth';
 import { SUPABASE_CONFIGURED, supabase } from '@/lib/supabase';
 import { setGlobalAccessToken } from '@/services/apiService';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
 
 interface AuthUser {
   id: string;
@@ -28,7 +28,11 @@ interface AuthContextType {
   isInitialized: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
-  signUp: (email: string, password: string, role?: 'driver' | 'guardian') => Promise<{ error: string | null }>;
+  signUp: (
+    email: string,
+    password: string,
+    role?: 'driver' | 'guardian'
+  ) => Promise<{ error: string | null }>;
   signOut: () => Promise<{ error: string | null }>;
 }
 
@@ -57,48 +61,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setGlobalAccessToken(newSession?.access_token ?? null);
   }, []);
 
+  // 🔥 INIT SESSION
   useEffect(() => {
     let isMounted = true;
 
     const init = async () => {
       try {
         console.log('[auth] init: starting getSession...');
-        // 🔥 CRITICAL: allow Supabase to hydrate session (native fix)
+
+        // allow Supabase to hydrate session
         await new Promise(resolve => setTimeout(resolve, 300));
 
         const {
           data: { session },
         } = await supabase.auth.getSession();
 
-        console.log('[auth] init: getSession returned session:', !!session);
+        console.log('[auth] init: session exists:', !!session);
 
         if (isMounted) {
-          console.log('[auth] init: isMounted=true, calling setSession...');
           setSession(session);
-        } else {
-          console.log('[auth] init: isMounted=false, skipping setSession');
         }
       } catch (err) {
         console.log('[auth] init error:', err);
-        if (isMounted) {
-          console.log('[auth] init: setting session to null due to error');
-          setSession(null);
-        }
+        if (isMounted) setSession(null);
       } finally {
         if (isMounted) {
-          console.log('[auth] init: finally block - calling setIsInitialized(true)');
-          setIsInitialized(true); // 🚨 MUST ALWAYS RUN
-        } else {
-          console.log('[auth] init: finally block - isMounted=false, NOT calling setIsInitialized');
+          setIsInitialized(true); // MUST RUN
         }
       }
     };
 
     if (SUPABASE_CONFIGURED) {
-      console.log('[auth] useEffect: SUPABASE_CONFIGURED=true, calling init()');
       init();
     } else {
-      console.log('[auth] useEffect: SUPABASE_CONFIGURED=false, setting isInitialized(true)');
       setIsInitialized(true);
     }
 
@@ -107,26 +102,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!isMounted) return;
 
-      console.log('[auth] onAuthStateChange fired:', _event, 'session:', !!session);
-
+      console.log('[auth] state change:', _event, !!session);
       setSession(session);
-      console.log('[auth] onAuthStateChange: calling setIsInitialized(true)');
-      setIsInitialized(true); // safe now
+      setIsInitialized(true);
     });
 
     return () => {
-      console.log('[auth] useEffect cleanup: unsubscribing');
       isMounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
+  // 🔐 AUTH METHODS
   const signIn = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
     return { error: error?.message ?? null };
   }, []);
 
-  const signInWithGoogle = useCallback(async () => signInWithGoogleOAuth(), []);
+  const signInWithGoogle = useCallback(
+    async () => signInWithGoogleOAuth(),
+    []
+  );
 
   const signUp = useCallback(
     async (email: string, password: string, role?: 'driver' | 'guardian') => {
@@ -162,13 +161,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [session, user, isInitialized, signIn, signInWithGoogle, signUp, signOut]
   );
 
-  console.log('[auth] context value updated:', {
+  console.log('[auth] context:', {
     isInitialized,
     isAuthenticated: !!session,
     userId: user?.id,
   });
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  // 🚀 PUSH NOTIFICATIONS (SAFE POSITION)
+  usePushNotifications();
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export const useAuthContext = () => useContext(AuthContext);

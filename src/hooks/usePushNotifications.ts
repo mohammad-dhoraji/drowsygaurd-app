@@ -1,122 +1,110 @@
-import React, { useEffect, useState } from 'react';
-import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
-import Constants from 'expo-constants';
-import { Platform } from 'react-native';
-import { useAuth } from '@/providers/AuthProvider';
-import { registerPushToken } from '@/services/pushNotificationService';
+import { useEffect, useState } from "react";
+import * as Device from "expo-device";
+import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
+import { Platform } from "react-native";
 
-/**
- * Registers for Expo push notifications, requests permission, and returns token.
- * Only works on physical devices. Stores token in Supabase.
- */
-export async function registerForPushNotificationsAsync(): Promise<
-  string | null
-> {
-  // Only request permissions on physical device (not simulators)
+import { useAuthContext } from "@/providers/AuthProvider";
+import { registerPushToken } from "@/services/pushNotificationService";
+
+// ✅ GLOBAL (must be outside)
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+export async function registerForPushNotificationsAsync(): Promise<string | null> {
   if (!Device.isDevice) {
-    console.log(
-      '[Push Notifications] Must use physical device for Push Notifications',
-    );
-    return null;
-  }
-
-  const { status } = await Notifications.requestPermissionsAsync();
-  if (status !== 'granted') {
-    console.log('[Push Notifications] Permission denied');
-    return null;
-  }
-
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: false,
-      }),
-    });
-  }
-
-  const projectId = Constants.expoConfig?.extra?.eas?.projectId;
-  if (!projectId) {
-    console.error('[Push Notifications] Missing eas.projectId in app.json');
+    console.log("[Push] Physical device required");
     return null;
   }
 
   try {
+    const { status } = await Notifications.requestPermissionsAsync();
+
+    if (status !== "granted") {
+      console.log("[Push] Permission denied");
+      return null;
+    }
+
+    // ✅ SAFE projectId (this fixes crashes)
+    const projectId =
+      Constants.expoConfig?.extra?.eas?.projectId ??
+      Constants.easConfig?.projectId;
+
+    if (!projectId) {
+      console.error("[Push] Missing EAS projectId");
+      return null;
+    }
+
     const { data: token } = await Notifications.getExpoPushTokenAsync({
       projectId,
     });
-    if (token) {
-      console.log('[Push Notifications] Token:', token);
-    } else {
-      console.log('[Push Notifications] Failed to get token');
-    }
 
+    console.log("[Push] Token:", token);
     return token;
   } catch (error) {
-    console.log(error);
-    console.error('[Push Notifications] Error getting token:', error);
+    console.error("[Push] Token error:", error);
     return null;
   }
 }
 
-/**
- * Hook to automatically register and sync push token with Supabase
- * Call this in your app's main component (e.g., in AuthProvider or App.tsx)
- */
-export function usePushNotifications(): {
-  token: string | null;
-  isLoading: boolean;
-} {
-  const { user, isAuthenticated } = useAuth();
+export function usePushNotifications() {
+  const { user, isAuthenticated, isInitialized } = useAuthContext();
+
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
 
-    const setupPushNotifications = async () => {
+    async function setup() {
       try {
+        // 🔥 CRITICAL FIX: wait for auth to be ready
+        if (!isInitialized) return;
+
         if (!isAuthenticated || !user?.id) {
-          console.log('[Push Notifications] User not authenticated, skipping token registration');
+          console.log("[Push] User not ready");
           if (isMounted) setIsLoading(false);
           return;
         }
 
-        const expoPushToken = await registerForPushNotificationsAsync();
+        console.log("[Push] Starting registration...");
 
-        if (!expoPushToken) {
-          console.log('[Push Notifications] Could not get Expo push token');
+        const expoToken = await registerForPushNotificationsAsync();
+
+        if (!expoToken) {
+          console.log("[Push] No token received");
           if (isMounted) setIsLoading(false);
           return;
         }
 
-        // Store token in Supabase
-        const { success, error } = await registerPushToken(expoPushToken, user.id);
+        const { success, error } = await registerPushToken(expoToken, user.id);
 
         if (isMounted) {
           if (success) {
-            setToken(expoPushToken);
-            console.log('[Push Notifications] Token registered successfully');
+            console.log("[Push] Token saved to DB");
+            setToken(expoToken);
           } else {
-            console.error('[Push Notifications] Failed to register token:', error);
+            console.error("[Push] DB error:", error);
           }
           setIsLoading(false);
         }
       } catch (err) {
-        console.error('[Push Notifications] Setup error:', err);
+        console.error("[Push] Setup crash:", err);
         if (isMounted) setIsLoading(false);
       }
-    };
+    }
 
-    setupPushNotifications();
+    setup();
 
     return () => {
       isMounted = false;
     };
-  }, [isAuthenticated, user?.id]);
+  }, [isInitialized, isAuthenticated, user?.id]);
 
   return { token, isLoading };
 }
-

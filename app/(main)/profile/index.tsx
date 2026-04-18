@@ -1,5 +1,6 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
   RefreshControl,
   Switch,
@@ -62,6 +63,17 @@ function SettingRow({
 export default function ProfileScreen() {
   const { signOut, user } = useAuth();
   const profileQuery = useCurrentUserProfile();
+  
+  // 🔍 DEBUG: Log profile query state
+  useEffect(() => {
+    console.warn('[Profile Screen] Query state changed:', {
+      isLoading: profileQuery.isLoading,
+      isError: profileQuery.isError,
+      hasData: Boolean(profileQuery.data),
+      error: profileQuery.error?.message,
+    });
+  }, [profileQuery.isLoading, profileQuery.isError, profileQuery.data, profileQuery.error]);
+
   const role = profileQuery.data?.role;
   const isDriver = role === 'driver';
   const isGuardian = role === 'guardian';
@@ -151,7 +163,34 @@ export default function ProfileScreen() {
       await guardiansQuery.refetch();
     } catch (error) {
       setFeedbackTone('error');
-      setFeedbackMessage(error instanceof Error ? error.message : 'Unable to link guardian.');
+      set/* 🔍 DEBUG: Show loading state */}
+        {profileQuery.isLoading ? (
+          <Card>
+            <CardContent className="p-5 flex-row items-center">
+              <ActivityIndicator color="#064e3b" />
+              <Text className="text-gray-600 dark:text-gray-300 ml-3">Loading profile...</Text>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {/* 🔍 DEBUG: Show error state */}
+        {profileQuery.isError && profileQuery.error ? (
+          <Card className="border border-red-300 bg-red-50 dark:bg-red-900/20">
+            <CardContent className="p-4">
+              <Text className="font-bold text-red-700 dark:text-red-300 mb-2">Profile Loading Error</Text>
+              <Text className="text-red-700 dark:text-red-300 text-sm">
+                {profileQuery.error.message || 'Failed to load profile data'}
+              </Text>
+              <Text
+                onPress={() => profileQuery.refetch()}
+                className="text-red-600 dark:text-red-400 mt-3 font-semibold">
+                Retry
+              </Text>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {FeedbackMessage(error instanceof Error ? error.message : 'Unable to link guardian.');
     }
   };
 
